@@ -1,0 +1,61 @@
+2. Configurer les variables d’environnement
+
+
+
+Duplique .env.example en .env dans le dossier backend, et remplis les valeurs (ex. JWT_SECRET, DATABASE_URL, etc.).
+
+3. Lancer l’application
+
+
+
+Pour le backend (mode dev avec nodemon) :
+
+
+npm run dev
+
+Pour le frontend (React Native) :
+
+
+npx react-native run-android  # ou run-ios
+
+Ou via le script :
+
+./start-dev.sh
+
+Fonctionnalités clés
+
+Authentification sécurisée JWT
+
+Multilingue (français / anglais)
+
+Intégration de capteurs EEG via APIs
+
+Visualisation temps réel des données EEG
+
+Génération de rapports PDF
+
+
+Tests
+
+Utiliser Jest pour les tests unitaires (frontend et backend)
+
+Tests d’intégration API à faire avec Postman ou Insomnia
+
+
+Contribution
+
+Respecter les conventions de code (ESLint)
+
+Créer des branches pour les nouvelles fonctionnalités
+
+Soumettre des pull requests claires et commentées
+
+Documenter tout nouveau composant ou service
+
+
+Contacts
+
+Bruno Coldold – Portail projet & coordination
+
+Email : [email@example.com]
+

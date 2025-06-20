@@ -1,0 +1,18 @@
+Comment utiliser ce script ?
+
+1. Installe Node.js (https://nodejs.org/) si ce n’est pas déjà fait.
+
+
+2. Sauvegarde ce script dans un fichier generate-sionohmair-structure.js.
+
+
+3. Ouvre un terminal dans le dossier où tu as sauvegardé ce script.
+
+
+4. Lance la commande :
+
+node generate-sionohmair-structure.js
+
+
+5. Cela créera un dossier sionohmair-app avec toute la structure et les fichiers.
+

@@ -1,0 +1,355 @@
+const fs = require('fs');
+const path = require('path');
+
+const baseDir = path.join(process.cwd(), 'sionohmair-app');
+
+const files = {
+  // Racine
+  'README.md': `# Sionohmair App
+
+Application mobile et backend pour l'analyse EEG, acoustique et électromagnétique selon le concept Sionohmair.
+
+## Architecture
+
+- Frontend : React Native  
+- Backend : Node.js + Express  
+- Base de données : PostgreSQL / MongoDB  
+- Multilingue, sécurisé, export PDF
+
+## Installation
+
+### Frontend
+
+\`\`\`bash
+cd frontend
+npm install
+npx react-native run-android # ou run-ios
+\`\`\`
+
+### Backend
+
+\`\`\`bash
+cd backend
+npm install
+npm run dev
+\`\`\`
+
+## Déploiement
+
+Configurer les variables d’environnement dans \`.env\`.
+
+## Contacts
+
+- Bruno Coldold - porteur de projet  
+- [email@example.com]
+`,
+
+  '.gitignore': `node_modules/
+logs
+*.log
+npm-debug.log*
+.env
+dist/
+build/
+ios/Pods/
+android/.gradle/
+android/app/build/
+`,
+
+  // Frontend package.json
+  'frontend/package.json': `{
+  "name": "sionohmair-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "react-native start",
+    "android": "react-native run-android",
+    "ios": "react-native run-ios",
+    "test": "jest"
+  },
+  "dependencies": {
+    "react": "18.2.0",
+    "react-native": "0.72.3",
+    "@react-navigation/native": "^6.1.6",
+    "@react-navigation/native-stack": "^6.9.12",
+    "react-native-gesture-handler": "^2.12.0",
+    "react-native-reanimated": "^3.4.2",
+    "react-native-safe-area-context": "^4.5.0",
+    "react-native-screens": "^3.20.0",
+    "i18next": "^23.4.0",
+    "react-i18next": "^13.2.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.22.9",
+    "@babel/runtime": "^7.22.9",
+    "@react-native/eslint-config": "^0.76.2",
+    "babel-jest": "^29.6.4",
+    "eslint": "^8.49.0",
+    "jest": "^29.6.4",
+    "metro-react-native-babel-preset": "^0.76.8",
+    "react-test-renderer": "18.2.0"
+  },
+  "jest": {
+    "preset": "react-native"
+  }
+}
+`,
+
+  // Backend package.json
+  'backend/package.json': `{
+  "name": "sionohmair-backend",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "body-parser": "^1.20.2",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3",
+    "mongoose": "^7.4.0",
+    "pg": "^8.11.2",
+    "sequelize": "^6.32.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
+`,
+
+  // .env.example
+  '.env.example': `PORT=4000
+JWT_SECRET=changemetoasecuresecret
+DATABASE_URL=postgres://user:password@localhost:5432/sionohmair_db
+
+MUSE_SDK_KEY=your_muse_sdk_key_here
+
+REACT_NATIVE_ENV=production
+`,
+
+  // Backend server.js
+  'backend/server.js': `const express = require('express');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+
+const app = express();
+app.use(cors());
+app.use(bodyParser.json());
+
+const PORT = process.env.PORT || 4000;
+
+// Routes d'exemple
+app.get('/', (req, res) => {
+  res.send('API Sionohmair Backend fonctionne!');
+});
+
+app.listen(PORT, () => {
+  console.log(\`Serveur backend lancé sur le port \${PORT}\`);
+});
+`,
+
+  // Frontend App.js
+  'frontend/src/App.js': `import React from 'react';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import HomeScreen from './screens/HomeScreen';
+
+const Stack = createNativeStackNavigator();
+
+export default function App() {
+  return (
+    <NavigationContainer>
+      <Stack.Navigator initialRouteName="Home" screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="Home" component={HomeScreen} />
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+}
+`,
+
+  // HomeScreen.js
+  'frontend/src/screens/HomeScreen.js': `import React from 'react';
+import { View, Text, StyleSheet } from 'react-native';
+
+export default function HomeScreen() {
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Bienvenue sur Sionohmair Insight</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex:1,
+    justifyContent:'center',
+    alignItems:'center',
+    backgroundColor:'#3A7BD5',
+  },
+  title: {
+    fontSize: 24,
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+  },
+});
+`,
+
+  // i18n fr.json
+  'frontend/src/i18n/fr.json': `{
+  "welcome": "Bienvenue sur Sionohmair Insight",
+  "home": {
+    "title": "Accueil",
+    "description": "L'application qui réinvente votre conscience"
+  },
+  "buttons": {
+    "start": "Commencer",
+    "settings": "Paramètres"
+  }
+}
+`,
+
+  // i18n en.json
+  'frontend/src/i18n/en.json': `{
+  "welcome": "Welcome to Sionohmair Insight",
+  "home": {
+    "title": "Home",
+    "description": "The app that reinvents your consciousness"
+  },
+  "buttons": {
+    "start": "Start",
+    "settings": "Settings"
+  }
+}
+`,
+
+  // api.js
+  'frontend/src/services/api.js': `import axios from 'axios';
+
+const API_BASE_URL = 'http://localhost:4000/api';
+
+const api = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 10000,
+});
+
+export const getUserProfile = (token) =>
+  api.get('/user/profile', {
+    headers: { Authorization: \`Bearer \${token}\` },
+  });
+
+export const login = (credentials) =>
+  api.post('/auth/login', credentials);
+
+export default api;
+`,
+
+  // backend/routes/user.js
+  'backend/routes/user.js': `const express = require('express');
+const router = express.Router();
+const authMiddleware = require('../middlewares/auth');
+
+router.get('/profile', authMiddleware, (req, res) => {
+  res.json({
+    id: req.user.id,
+    name: 'Bruno Coldold',
+    email: 'bruno@example.com',
+  });
+});
+
+module.exports = router;
+`,
+
+  // backend/middlewares/auth.js
+  'backend/middlewares/auth.js': `const jwt = require('jsonwebtoken');
+
+module.exports = (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return res.status(401).json({ message: 'Accès non autorisé' });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (err) {
+    res.status(401).json({ message: 'Token invalide' });
+  }
+};
+`,
+
+  // backend/models/User.js
+  'backend/models/User.js': `const mongoose = require('mongoose');
+
+const UserSchema = new mongoose.Schema({
+  name: String,
+  email: { type: String, unique: true },
+  passwordHash: String,
+  createdAt: { type: Date, default: Date.now },
+});
+
+module.exports = mongoose.model('User', UserSchema);
+`,
+
+  // frontend/src/components/EEGChart.jsx
+  'frontend/src/components/EEGChart.jsx': `import React from 'react';
+import { View, Text, StyleSheet } from 'react-native';
+import { LineChart } from 'react-native-chart-kit';
+
+export default function EEGChart({ data }) {
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Graphique EEG</Text>
+      <LineChart
+        data={{
+          labels: data.labels,
+          datasets: [{ data: data.values }],
+        }}
+        width={320}
+        height={220}
+        chartConfig={{
+          backgroundColor: '#3A7BD5',
+          backgroundGradientFrom: '#3A7BD5',
+          backgroundGradientTo: '#00d2ff',
+          color: (opacity = 1) => \`rgba(255, 255, 255, \${opacity})\`,
+        }}
+        bezier
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { padding: 10, backgroundColor: '#0D47A1', borderRadius: 10 },
+  title: { color: '#FFF', fontSize: 18, marginBottom: 10, fontWeight: 'bold' },
+});
+`,
+
+  // start-dev.sh
+  'start-dev.sh': `#!/bin/bash
+echo "Lancement du backend..."
+cd backend && npm run dev &
+echo "Lancement du frontend..."
+cd frontend && npx react-native start
+`
+};
+
+function ensureDir(dir) {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
+function writeFiles(base, filesMap) {
+  for (const [filePath, content] of Object.entries(filesMap)) {
+    const fullPath = path.join(base, filePath);
+    ensureDir(path.dirname(fullPath));
+    fs.writeFileSync(fullPath, content, 'utf8');
+    console.log(`Créé : ${fullPath}`);
+  }
+}
+
+writeFiles(baseDir, files);
+
+console.log('Structure complète Sionohmair Insight générée avec succès dans le dossier :', baseDir);
