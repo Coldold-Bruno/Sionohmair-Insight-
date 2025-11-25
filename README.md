@@ -1,246 +1,335 @@
-// backend/routes/auth.js - Routes d'authentification corrigées
+// backend/routes/eeg.js - Gestion des données EEG
 const express = require('express');
 const router = express.Router();
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const { body, validationResult } = require('express-validator');
-const User = require('../models/User');
+const authMiddleware = require('../middlewares/auth');
+const EEGSession = require('../models/EEGSession');
 
 // ============================================
-// VALIDATION MIDDLEWARE
+// CRÉER UNE SESSION EEG
 // ============================================
-const validateRegister = [
-  body('email').isEmail().withMessage('Email invalide'),
-  body('password').isLength({ min: 8 }).withMessage('Mot de passe minimum 8 caractères'),
-  body('name').trim().notEmpty().withMessage('Nom requis')
-];
-
-const validateLogin = [
-  body('email').isEmail().withMessage('Email invalide'),
-  body('password').notEmpty().withMessage('Mot de passe requis')
-];
-
-// ============================================
-// INSCRIPTION
-// ============================================
-router.post('/register', validateRegister, async (req, res) => {
+router.post('/session/start', authMiddleware, async (req, res) => {
   try {
-    // Validation
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ 
-        success: false, 
-        errors: errors.array() 
-      });
-    }
+    const { deviceType, deviceId } = req.body;
 
-    const { email, password, name, language = 'fr' } = req.body;
-
-    // Vérifier si l'utilisateur existe
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Cet email est déjà utilisé' 
-      });
-    }
-
-    // Hasher le mot de passe
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(password, salt);
-
-    // Créer l'utilisateur
-    const user = new User({
-      name,
-      email,
-      passwordHash,
-      language,
-      preferences: {
-        notifications: true,
-        darkMode: false,
-        language
-      }
+    const session = new EEGSession({
+      userId: req.user.id,
+      deviceType,
+      deviceId,
+      startTime: new Date(),
+      status: 'active',
+      data: []
     });
 
-    await user.save();
-
-    // Générer token JWT
-    const token = jwt.sign(
-      { 
-        id: user._id, 
-        email: user.email,
-        name: user.name 
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: '30d' }
-    );
+    await session.save();
 
     res.status(201).json({
       success: true,
-      message: 'Compte créé avec succès',
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        language: user.language
-      }
+      message: 'Session EEG démarrée',
+      sessionId: session._id,
+      startTime: session.startTime
     });
 
   } catch (err) {
-    console.error('Erreur inscription:', err);
+    console.error('Erreur création session EEG:', err);
     res.status(500).json({ 
       success: false, 
-      message: 'Erreur lors de l\'inscription' 
+      message: 'Erreur lors du démarrage de la session' 
     });
   }
 });
 
 // ============================================
-// CONNEXION
+// ENVOYER DONNÉES EEG EN TEMPS RÉEL
 // ============================================
-router.post('/login', validateLogin, async (req, res) => {
+router.post('/session/:sessionId/data', authMiddleware, async (req, res) => {
   try {
-    // Validation
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ 
-        success: false, 
-        errors: errors.array() 
-      });
-    }
+    const { sessionId } = req.params;
+    const { timestamp, channels, quality } = req.body;
 
-    const { email, password } = req.body;
-
-    // Trouver l'utilisateur
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Email ou mot de passe incorrect' 
-      });
-    }
-
-    // Vérifier le mot de passe
-    const isMatch = await bcrypt.compare(password, user.passwordHash);
-    if (!isMatch) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Email ou mot de passe incorrect' 
-      });
-    }
-
-    // Mettre à jour la dernière connexion
-    user.lastLogin = new Date();
-    await user.save();
-
-    // Générer token JWT
-    const token = jwt.sign(
-      { 
-        id: user._id, 
-        email: user.email,
-        name: user.name 
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: '30d' }
-    );
-
-    res.json({
-      success: true,
-      message: 'Connexion réussie',
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        language: user.language,
-        preferences: user.preferences
-      }
-    });
-
-  } catch (err) {
-    console.error('Erreur connexion:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Erreur lors de la connexion' 
-    });
-  }
-});
-
-// ============================================
-// VÉRIFICATION TOKEN
-// ============================================
-router.get('/verify', async (req, res) => {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
+    const session = await EEGSession.findById(sessionId);
     
-    if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Token manquant' 
-      });
-    }
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id).select('-passwordHash');
-
-    if (!user) {
+    if (!session) {
       return res.status(404).json({ 
         success: false, 
-        message: 'Utilisateur non trouvé' 
+        message: 'Session non trouvée' 
+      });
+    }
+
+    if (session.userId.toString() !== req.user.id) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Accès non autorisé' 
+      });
+    }
+
+    // Ajouter les données
+    session.data.push({
+      timestamp: new Date(timestamp),
+      channels: channels, // {TP9, AF7, AF8, TP10, ...}
+      quality: quality || 'good'
+    });
+
+    // Limiter la taille du buffer (garder les 10000 derniers points)
+    if (session.data.length > 10000) {
+      session.data = session.data.slice(-10000);
+    }
+
+    await session.save();
+
+    res.json({
+      success: true,
+      message: 'Données enregistrées',
+      dataPoints: session.data.length
+    });
+
+  } catch (err) {
+    console.error('Erreur enregistrement données EEG:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erreur lors de l\'enregistrement' 
+    });
+  }
+});
+
+// ============================================
+// TERMINER SESSION EEG
+// ============================================
+router.post('/session/:sessionId/stop', authMiddleware, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+
+    const session = await EEGSession.findById(sessionId);
+    
+    if (!session) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Session non trouvée' 
+      });
+    }
+
+    if (session.userId.toString() !== req.user.id) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Accès non autorisé' 
+      });
+    }
+
+    session.endTime = new Date();
+    session.status = 'completed';
+    session.duration = (session.endTime - session.startTime) / 1000; // en secondes
+
+    // Calculer les statistiques de base
+    session.statistics = calculateStatistics(session.data);
+
+    await session.save();
+
+    res.json({
+      success: true,
+      message: 'Session terminée',
+      duration: session.duration,
+      dataPoints: session.data.length,
+      statistics: session.statistics
+    });
+
+  } catch (err) {
+    console.error('Erreur arrêt session EEG:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erreur lors de l\'arrêt de la session' 
+    });
+  }
+});
+
+// ============================================
+// RÉCUPÉRER HISTORIQUE DES SESSIONS
+// ============================================
+router.get('/sessions', authMiddleware, async (req, res) => {
+  try {
+    const { limit = 20, skip = 0 } = req.query;
+
+    const sessions = await EEGSession.find({ 
+      userId: req.user.id 
+    })
+      .sort({ startTime: -1 })
+      .limit(parseInt(limit))
+      .skip(parseInt(skip))
+      .select('-data'); // Ne pas inclure les données brutes
+
+    const total = await EEGSession.countDocuments({ userId: req.user.id });
+
+    res.json({
+      success: true,
+      sessions,
+      pagination: {
+        total,
+        limit: parseInt(limit),
+        skip: parseInt(skip),
+        hasMore: skip + limit < total
+      }
+    });
+
+  } catch (err) {
+    console.error('Erreur récupération sessions:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erreur lors de la récupération' 
+    });
+  }
+});
+
+// ============================================
+// RÉCUPÉRER DÉTAILS D'UNE SESSION
+// ============================================
+router.get('/session/:sessionId', authMiddleware, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+
+    const session = await EEGSession.findById(sessionId);
+    
+    if (!session) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Session non trouvée' 
+      });
+    }
+
+    if (session.userId.toString() !== req.user.id) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Accès non autorisé' 
       });
     }
 
     res.json({
       success: true,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        language: user.language,
-        preferences: user.preferences
+      session
+    });
+
+  } catch (err) {
+    console.error('Erreur récupération session:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erreur lors de la récupération' 
+    });
+  }
+});
+
+// ============================================
+// ANALYSER SESSION EEG
+// ============================================
+router.post('/session/:sessionId/analyze', authMiddleware, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+
+    const session = await EEGSession.findById(sessionId);
+    
+    if (!session) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Session non trouvée' 
+      });
+    }
+
+    if (session.userId.toString() !== req.user.id) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Accès non autorisé' 
+      });
+    }
+
+    // Analyse avancée des données EEG
+    const analysis = performAdvancedAnalysis(session.data);
+
+    res.json({
+      success: true,
+      analysis: {
+        brainwaves: analysis.brainwaves,
+        meditation: analysis.meditation,
+        focus: analysis.focus,
+        relaxation: analysis.relaxation,
+        insights: analysis.insights
       }
     });
 
   } catch (err) {
-    res.status(401).json({ 
-      success: false, 
-      message: 'Token invalide' 
-    });
-  }
-});
-
-// ============================================
-// RÉINITIALISATION MOT DE PASSE
-// ============================================
-router.post('/forgot-password', async (req, res) => {
-  try {
-    const { email } = req.body;
-    const user = await User.findOne({ email });
-
-    if (!user) {
-      // Ne pas révéler si l'email existe
-      return res.json({ 
-        success: true, 
-        message: 'Si cet email existe, un lien de réinitialisation a été envoyé' 
-      });
-    }
-
-    // TODO: Implémenter l'envoi d'email avec token de réinitialisation
-    // Pour l'instant, retourner un message générique
-
-    res.json({ 
-      success: true, 
-      message: 'Si cet email existe, un lien de réinitialisation a été envoyé' 
-    });
-
-  } catch (err) {
-    console.error('Erreur réinitialisation:', err);
+    console.error('Erreur analyse session:', err);
     res.status(500).json({ 
       success: false, 
-      message: 'Erreur lors de la réinitialisation' 
+      message: 'Erreur lors de l\'analyse' 
     });
   }
 });
 
-module.exports = router;
+// ============================================
+// FONCTIONS AUXILIAIRES
+// ============================================
+function calculateStatistics(data) {
+  if (!data || data.length === 0) return {};
+
+  // Calculer moyennes, écarts-types, etc.
+  const channelStats = {};
+  
+  ['TP9', 'AF7', 'AF8', 'TP10'].forEach(channel => {
+    const values = data
+      .map(d => d.channels && d.channels[channel])
+      .filter(v => v !== undefined && v !== null);
+    
+    if (values.length > 0) {
+      const sum = values.reduce((a, b) => a + b, 0);
+      const mean = sum / values.length;
+      
+      channelStats[channel] = {
+        mean,
+        min: Math.min(...values),
+        max: Math.max(...values),
+        samples: values.length
+      };
+    }
+  });
+
+  return {
+    totalSamples: data.length,
+    channels: channelStats,
+    averageQuality: calculateAverageQuality(data)
+  };
+}
+
+function calculateAverageQuality(data) {
+  const qualityMap = { excellent: 4, good: 3, fair: 2, poor: 1 };
+  const qualities = data
+    .map(d => qualityMap[d.quality] || 0)
+    .filter(q => q > 0);
+  
+  if (qualities.length === 0) return 'unknown';
+  
+  const avg = qualities.reduce((a, b) => a + b, 0) / qualities.length;
+  
+  if (avg >= 3.5) return 'excellent';
+  if (avg >= 2.5) return 'good';
+  if (avg >= 1.5) return 'fair';
+  return 'poor';
+}
+
+function performAdvancedAnalysis(data) {
+  // TODO: Implémenter l'analyse FFT et détection des ondes cérébrales
+  // Pour l'instant, retourner des valeurs simulées
+  
+  return {
+    brainwaves: {
+      delta: Math.random() * 100,
+      theta: Math.random() * 100,
+      alpha: Math.random() * 100,
+      beta: Math.random() * 100,
+      gamma: Math.random() * 100
+    },
+    meditation: Math.floor(Math.random() * 100),
+    focus: Math.floor(Math.random() * 100),
+    relaxation: Math.floor(Math.random() * 100),
+    insights: [
+      'État de relaxation détecté',
+      'Bon niveau de concentration'
+    ]
+  };
+}
+
+module.exports = router; 
