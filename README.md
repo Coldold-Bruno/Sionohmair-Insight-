@@ -1,109 +1,141 @@
-// backend/models/User.js - Modèle utilisateur corrigé
+//
+// backend/models/EEGSession.js - Modèle de session EEG
 const mongoose = require('mongoose');
 
-const UserSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: [true, 'Le nom est requis'],
-    trim: true,
-    minlength: [2, 'Le nom doit contenir au moins 2 caractères'],
-    maxlength: [100, 'Le nom ne peut pas dépasser 100 caractères']
-  },
-  
-  email: {
-    type: String,
-    required: [true, 'L\'email est requis'],
-    unique: true,
-    lowercase: true,
-    trim: true,
-    match: [/^\S+@\S+\.\S+$/, 'Email invalide']
-  },
-  
-  passwordHash: {
-    type: String,
-    required: [true, 'Le mot de passe est requis']
-  },
-  
-  language: {
-    type: String,
-    enum: ['fr', 'en', 'es', 'de'],
-    default: 'fr'
-  },
-  
-  preferences: {
-    notifications: {
-      type: Boolean,
-      default: true
-    },
-    darkMode: {
-      type: Boolean,
-      default: false
-    },
-    audioVolume: {
-      type: Number,
-      default: 70,
-      min: 0,
-      max: 100
-    },
-    language: {
-      type: String,
-      default: 'fr'
-    }
-  },
-  
-  profile: {
-    avatar: String,
-    bio: String,
-    birthDate: Date,
-    gender: {
-      type: String,
-      enum: ['male', 'female', 'other', 'prefer_not_to_say']
-    }
-  },
-  
-  devices: [{
-    type: {
-      type: String,
-      enum: ['muse', 'emotiv', 'openbci', 'neurosky', 'other']
-    },
-    deviceId: String,
-    name: String,
-    lastConnected: Date,
-    addedAt: {
-      type: Date,
-      default: Date.now
-    }
-  }],
-  
-  subscription: {
-    plan: {
-      type: String,
-      enum: ['free', 'premium', 'pro'],
-      default: 'free'
-    },
-    startDate: Date,
-    endDate: Date,
-    autoRenew: {
-      type: Boolean,
-      default: false
-    }
-  },
-  
-  stats: {
-    totalSessions: {
-      type: Number,
-      default: 0
-    },
-    totalDuration: {
-      type: Number,
-      default: 0
-    },
-    lastSessionDate: Date
-  },
-  
-  lastLogin: {
+const EEGDataPointSchema = new mongoose.Schema({
+  timestamp: {
     type: Date,
+    required: true
+  },
+  channels: {
+    TP9: Number,  // Lobe temporal gauche
+    AF7: Number,  // Front gauche
+    AF8: Number,  // Front droit
+    TP10: Number, // Lobe temporal droit
+    AUX: Number   // Canal auxiliaire
+  },
+  quality: {
+    type: String,
+    enum: ['excellent', 'good', 'fair', 'poor'],
+    default: 'good'
+  },
+  battery: Number // Niveau de batterie du dispositif (0-100)
+}, { _id: false });
+
+const EEGSessionSchema = new mongoose.Schema({
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    index: true
+  },
+  
+  deviceType: {
+    type: String,
+    enum: ['muse', 'emotiv', 'openbci', 'neurosky', 'other'],
+    required: true
+  },
+  
+  deviceId: {
+    type: String,
+    required: true
+  },
+  
+  startTime: {
+    type: Date,
+    required: true,
     default: Date.now
+  },
+  
+  endTime: {
+    type: Date
+  },
+  
+  duration: {
+    type: Number, // en secondes
+    default: 0
+  },
+  
+  status: {
+    type: String,
+    enum: ['active', 'paused', 'completed', 'error'],
+    default: 'active'
+  },
+  
+  data: [EEGDataPointSchema],
+  
+  statistics: {
+    totalSamples: Number,
+    averageQuality: String,
+    channels: {
+      TP9: {
+        mean: Number,
+        min: Number,
+        max: Number,
+        samples: Number
+      },
+      AF7: {
+        mean: Number,
+        min: Number,
+        max: Number,
+        samples: Number
+      },
+      AF8: {
+        mean: Number,
+        min: Number,
+        max: Number,
+        samples: Number
+      },
+      TP10: {
+        mean: Number,
+        min: Number,
+        max: Number,
+        samples: Number
+      }
+    }
+  },
+  
+  analysis: {
+    brainwaves: {
+      delta: Number,   // 0.5-4 Hz - Sommeil profond
+      theta: Number,   // 4-8 Hz - Méditation, créativité
+      alpha: Number,   // 8-13 Hz - Relaxation, yeux fermés
+      beta: Number,    // 13-30 Hz - Concentration, éveil
+      gamma: Number    // 30-100 Hz - Haute cognition
+    },
+    meditation: Number,    // Score 0-100
+    focus: Number,         // Score 0-100
+    relaxation: Number,    // Score 0-100
+    stress: Number,        // Score 0-100
+    insights: [String],
+    performedAt: Date
+  },
+  
+  notes: {
+    type: String,
+    maxlength: 1000
+  },
+  
+  tags: [String],
+  
+  environment: {
+    location: String,
+    ambient: {
+      type: String,
+      enum: ['quiet', 'moderate', 'noisy']
+    },
+    activity: {
+      type: String,
+      enum: ['meditation', 'work', 'rest', 'exercise', 'other']
+    }
+  },
+  
+  audioSync: {
+    enabled: Boolean,
+    audioSessionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'AudioSession'
+    }
   },
   
   createdAt: {
@@ -114,44 +146,83 @@ const UserSchema = new mongoose.Schema({
   updatedAt: {
     type: Date,
     default: Date.now
-  },
-  
-  isActive: {
-    type: Boolean,
-    default: true
-  },
-  
-  isVerified: {
-    type: Boolean,
-    default: false
-  },
-  
-  verificationToken: String,
-  resetPasswordToken: String,
-  resetPasswordExpires: Date
+  }
 
 }, {
   timestamps: true
 });
 
 // Index pour améliorer les performances
-UserSchema.index({ email: 1 });
-UserSchema.index({ createdAt: -1 });
+EEGSessionSchema.index({ userId: 1, startTime: -1 });
+EEGSessionSchema.index({ status: 1 });
+EEGSessionSchema.index({ createdAt: -1 });
 
-// Méthode pour nettoyer l'objet utilisateur avant de l'envoyer au client
-UserSchema.methods.toJSON = function() {
-  const user = this.toObject();
-  delete user.passwordHash;
-  delete user.verificationToken;
-  delete user.resetPasswordToken;
-  delete user.resetPasswordExpires;
-  return user;
+// Méthode virtuelle pour obtenir la durée en minutes
+EEGSessionSchema.virtual('durationMinutes').get(function() {
+  return this.duration ? Math.round(this.duration / 60) : 0;
+});
+
+// Méthode pour calculer les statistiques
+EEGSessionSchema.methods.calculateStatistics = function() {
+  if (!this.data || this.data.length === 0) {
+    return null;
+  }
+
+  const channelStats = {};
+  const channels = ['TP9', 'AF7', 'AF8', 'TP10'];
+  
+  channels.forEach(channel => {
+    const values = this.data
+      .map(d => d.channels && d.channels[channel])
+      .filter(v => v !== undefined && v !== null);
+    
+    if (values.length > 0) {
+      const sum = values.reduce((a, b) => a + b, 0);
+      const mean = sum / values.length;
+      
+      channelStats[channel] = {
+        mean: Math.round(mean * 100) / 100,
+        min: Math.min(...values),
+        max: Math.max(...values),
+        samples: values.length
+      };
+    }
+  });
+
+  // Calculer la qualité moyenne
+  const qualityMap = { excellent: 4, good: 3, fair: 2, poor: 1 };
+  const qualities = this.data
+    .map(d => qualityMap[d.quality] || 0)
+    .filter(q => q > 0);
+  
+  let averageQuality = 'unknown';
+  if (qualities.length > 0) {
+    const avg = qualities.reduce((a, b) => a + b, 0) / qualities.length;
+    if (avg >= 3.5) averageQuality = 'excellent';
+    else if (avg >= 2.5) averageQuality = 'good';
+    else if (avg >= 1.5) averageQuality = 'fair';
+    else averageQuality = 'poor';
+  }
+
+  this.statistics = {
+    totalSamples: this.data.length,
+    averageQuality,
+    channels: channelStats
+  };
+
+  return this.statistics;
 };
 
-// Hook pre-save pour mettre à jour updatedAt
-UserSchema.pre('save', function(next) {
+// Hook pre-save
+EEGSessionSchema.pre('save', function(next) {
   this.updatedAt = Date.now();
+  
+  // Calculer la durée si la session est terminée
+  if (this.endTime && this.startTime) {
+    this.duration = (this.endTime - this.startTime) / 1000;
+  }
+  
   next();
 });
 
-module.exports = mongoose.model('User', UserSchema);
+module.exports = mongoose.model('EEGSession', EEGSessionSchema);
