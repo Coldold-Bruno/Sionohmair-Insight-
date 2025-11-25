@@ -1,228 +1,162 @@
-//
-// backend/models/EEGSession.js - Modèle de session EEG
-const mongoose = require('mongoose');
 
-const EEGDataPointSchema = new mongoose.Schema({
-  timestamp: {
-    type: Date,
-    required: true
-  },
-  channels: {
-    TP9: Number,  // Lobe temporal gauche
-    AF7: Number,  // Front gauche
-    AF8: Number,  // Front droit
-    TP10: Number, // Lobe temporal droit
-    AUX: Number   // Canal auxiliaire
-  },
-  quality: {
-    type: String,
-    enum: ['excellent', 'good', 'fair', 'poor'],
-    default: 'good'
-  },
-  battery: Number // Niveau de batterie du dispositif (0-100)
-}, { _id: false });
+// frontend/src/App.js - Application React Native corrigée
+import React, { useEffect, useState } from 'react';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { StatusBar, ActivityIndicator, View } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { I18nextProvider } from 'react-i18next';
+import i18n from './i18n/config';
 
-const EEGSessionSchema = new mongoose.Schema({
-  userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-    index: true
-  },
-  
-  deviceType: {
-    type: String,
-    enum: ['muse', 'emotiv', 'openbci', 'neurosky', 'other'],
-    required: true
-  },
-  
-  deviceId: {
-    type: String,
-    required: true
-  },
-  
-  startTime: {
-    type: Date,
-    required: true,
-    default: Date.now
-  },
-  
-  endTime: {
-    type: Date
-  },
-  
-  duration: {
-    type: Number, // en secondes
-    default: 0
-  },
-  
-  status: {
-    type: String,
-    enum: ['active', 'paused', 'completed', 'error'],
-    default: 'active'
-  },
-  
-  data: [EEGDataPointSchema],
-  
-  statistics: {
-    totalSamples: Number,
-    averageQuality: String,
-    channels: {
-      TP9: {
-        mean: Number,
-        min: Number,
-        max: Number,
-        samples: Number
-      },
-      AF7: {
-        mean: Number,
-        min: Number,
-        max: Number,
-        samples: Number
-      },
-      AF8: {
-        mean: Number,
-        min: Number,
-        max: Number,
-        samples: Number
-      },
-      TP10: {
-        mean: Number,
-        min: Number,
-        max: Number,
-        samples: Number
+// Screens
+import HomeScreen from './screens/HomeScreen';
+import LoginScreen from './screens/LoginScreen';
+import RegisterScreen from './screens/RegisterScreen';
+import DashboardScreen from './screens/DashboardScreen';
+import EEGSessionScreen from './screens/EEGSessionScreen';
+import DeviceConnectionScreen from './screens/DeviceConnectionScreen';
+import ProfileScreen from './screens/ProfileScreen';
+import SettingsScreen from './screens/SettingsScreen';
+import SessionHistoryScreen from './screens/SessionHistoryScreen';
+import SessionDetailsScreen from './screens/SessionDetailsScreen';
+
+// Context
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { DeviceProvider } from './contexts/DeviceContext';
+
+const Stack = createNativeStackNavigator();
+
+// Navigation pour utilisateurs authentifiés
+function AuthStack() {
+  return (
+    <Stack.Navigator
+      screenOptions={{
+        headerShown: true,
+        headerStyle: {
+          backgroundColor: '#3A7BD5',
+        },
+        headerTintColor: '#fff',
+        headerTitleStyle: {
+          fontWeight: 'bold',
+        },
+      }}
+    >
+      <Stack.Screen 
+        name="Dashboard" 
+        component={DashboardScreen}
+        options={{ title: 'Tableau de bord' }}
+      />
+      <Stack.Screen 
+        name="EEGSession" 
+        component={EEGSessionScreen}
+        options={{ title: 'Session EEG' }}
+      />
+      <Stack.Screen 
+        name="DeviceConnection" 
+        component={DeviceConnectionScreen}
+        options={{ title: 'Connexion dispositif' }}
+      />
+      <Stack.Screen 
+        name="Profile" 
+        component={ProfileScreen}
+        options={{ title: 'Profil' }}
+      />
+      <Stack.Screen 
+        name="Settings" 
+        component={SettingsScreen}
+        options={{ title: 'Paramètres' }}
+      />
+      <Stack.Screen 
+        name="SessionHistory" 
+        component={SessionHistoryScreen}
+        options={{ title: 'Historique' }}
+      />
+      <Stack.Screen 
+        name="SessionDetails" 
+        component={SessionDetailsScreen}
+        options={{ title: 'Détails session' }}
+      />
+    </Stack.Navigator>
+  );
+}
+
+// Navigation pour utilisateurs non authentifiés
+function GuestStack() {
+  return (
+    <Stack.Navigator
+      screenOptions={{
+        headerShown: false,
+      }}
+    >
+      <Stack.Screen name="Home" component={HomeScreen} />
+      <Stack.Screen name="Login" component={LoginScreen} />
+      <Stack.Screen name="Register" component={RegisterScreen} />
+    </Stack.Navigator>
+  );
+}
+
+// Composant de navigation principal
+function RootNavigator() {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#3A7BD5' }}>
+        <ActivityIndicator size="large" color="#ffffff" />
+      </View>
+    );
+  }
+
+  return (
+    <NavigationContainer>
+      {user ? <AuthStack /> : <GuestStack />}
+    </NavigationContainer>
+  );
+}
+
+// Composant principal de l'application
+export default function App() {
+  const [isReady, setIsReady] = useState(false);
+
+  useEffect(() => {
+    // Initialisation de l'application
+    const initializeApp = async () => {
+      try {
+        // Charger les préférences utilisateur
+        const savedLanguage = await AsyncStorage.getItem('user_language');
+        if (savedLanguage) {
+          i18n.changeLanguage(savedLanguage);
+        }
+
+        // Autres initialisations...
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        setIsReady(true);
+      } catch (error) {
+        console.error('Erreur initialisation:', error);
+        setIsReady(true);
       }
-    }
-  },
-  
-  analysis: {
-    brainwaves: {
-      delta: Number,   // 0.5-4 Hz - Sommeil profond
-      theta: Number,   // 4-8 Hz - Méditation, créativité
-      alpha: Number,   // 8-13 Hz - Relaxation, yeux fermés
-      beta: Number,    // 13-30 Hz - Concentration, éveil
-      gamma: Number    // 30-100 Hz - Haute cognition
-    },
-    meditation: Number,    // Score 0-100
-    focus: Number,         // Score 0-100
-    relaxation: Number,    // Score 0-100
-    stress: Number,        // Score 0-100
-    insights: [String],
-    performedAt: Date
-  },
-  
-  notes: {
-    type: String,
-    maxlength: 1000
-  },
-  
-  tags: [String],
-  
-  environment: {
-    location: String,
-    ambient: {
-      type: String,
-      enum: ['quiet', 'moderate', 'noisy']
-    },
-    activity: {
-      type: String,
-      enum: ['meditation', 'work', 'rest', 'exercise', 'other']
-    }
-  },
-  
-  audioSync: {
-    enabled: Boolean,
-    audioSessionId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'AudioSession'
-    }
-  },
-  
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  
-  updatedAt: {
-    type: Date,
-    default: Date.now
+    };
+
+    initializeApp();
+  }, []);
+
+  if (!isReady) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#3A7BD5' }}>
+        <ActivityIndicator size="large" color="#ffffff" />
+      </View>
+    );
   }
 
-}, {
-  timestamps: true
-});
-
-// Index pour améliorer les performances
-EEGSessionSchema.index({ userId: 1, startTime: -1 });
-EEGSessionSchema.index({ status: 1 });
-EEGSessionSchema.index({ createdAt: -1 });
-
-// Méthode virtuelle pour obtenir la durée en minutes
-EEGSessionSchema.virtual('durationMinutes').get(function() {
-  return this.duration ? Math.round(this.duration / 60) : 0;
-});
-
-// Méthode pour calculer les statistiques
-EEGSessionSchema.methods.calculateStatistics = function() {
-  if (!this.data || this.data.length === 0) {
-    return null;
-  }
-
-  const channelStats = {};
-  const channels = ['TP9', 'AF7', 'AF8', 'TP10'];
-  
-  channels.forEach(channel => {
-    const values = this.data
-      .map(d => d.channels && d.channels[channel])
-      .filter(v => v !== undefined && v !== null);
-    
-    if (values.length > 0) {
-      const sum = values.reduce((a, b) => a + b, 0);
-      const mean = sum / values.length;
-      
-      channelStats[channel] = {
-        mean: Math.round(mean * 100) / 100,
-        min: Math.min(...values),
-        max: Math.max(...values),
-        samples: values.length
-      };
-    }
-  });
-
-  // Calculer la qualité moyenne
-  const qualityMap = { excellent: 4, good: 3, fair: 2, poor: 1 };
-  const qualities = this.data
-    .map(d => qualityMap[d.quality] || 0)
-    .filter(q => q > 0);
-  
-  let averageQuality = 'unknown';
-  if (qualities.length > 0) {
-    const avg = qualities.reduce((a, b) => a + b, 0) / qualities.length;
-    if (avg >= 3.5) averageQuality = 'excellent';
-    else if (avg >= 2.5) averageQuality = 'good';
-    else if (avg >= 1.5) averageQuality = 'fair';
-    else averageQuality = 'poor';
-  }
-
-  this.statistics = {
-    totalSamples: this.data.length,
-    averageQuality,
-    channels: channelStats
-  };
-
-  return this.statistics;
-};
-
-// Hook pre-save
-EEGSessionSchema.pre('save', function(next) {
-  this.updatedAt = Date.now();
-  
-  // Calculer la durée si la session est terminée
-  if (this.endTime && this.startTime) {
-    this.duration = (this.endTime - this.startTime) / 1000;
-  }
-  
-  next();
-});
-
-module.exports = mongoose.model('EEGSession', EEGSessionSchema);
+  return (
+    <I18nextProvider i18n={i18n}>
+      <AuthProvider>
+        <DeviceProvider>
+          <StatusBar barStyle="light-content" backgroundColor="#3A7BD5" />
+          <RootNavigator />
+        </DeviceProvider>
+      </AuthProvider>
+    </I18nextProvider>
+  );
+}
