@@ -1,153 +1,246 @@
-// backend/server.js - Version corrigée et améliorée
-require('dotenv').config();
+// backend/routes/auth.js - Routes d'authentification corrigées
 const express = require('express');
-const cors = require('cors');
-const bodyParser = require('body-parser');
-const mongoose = require('mongoose');
-const { Sequelize } = require('sequelize');
-
-const app = express();
-
-// ============================================
-// CONFIGURATION MIDDLEWARE
-// ============================================
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true
-}));
-app.use(bodyParser.json({ limit: '50mb' }));
-app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
-
-// Logging middleware
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
-  next();
-});
+const router = express.Router();
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { body, validationResult } = require('express-validator');
+const User = require('../models/User');
 
 // ============================================
-// CONNEXION BASE DE DONNÉES
+// VALIDATION MIDDLEWARE
 // ============================================
-// MongoDB pour données non-structurées (sessions EEG, audio)
-const connectMongoDB = async () => {
+const validateRegister = [
+  body('email').isEmail().withMessage('Email invalide'),
+  body('password').isLength({ min: 8 }).withMessage('Mot de passe minimum 8 caractères'),
+  body('name').trim().notEmpty().withMessage('Nom requis')
+];
+
+const validateLogin = [
+  body('email').isEmail().withMessage('Email invalide'),
+  body('password').notEmpty().withMessage('Mot de passe requis')
+];
+
+// ============================================
+// INSCRIPTION
+// ============================================
+router.post('/register', validateRegister, async (req, res) => {
   try {
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/sionohmair', {
-      useNewUrlParser: true,
-      useUnifiedTopology: true
+    // Validation
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ 
+        success: false, 
+        errors: errors.array() 
+      });
+    }
+
+    const { email, password, name, language = 'fr' } = req.body;
+
+    // Vérifier si l'utilisateur existe
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Cet email est déjà utilisé' 
+      });
+    }
+
+    // Hasher le mot de passe
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
+
+    // Créer l'utilisateur
+    const user = new User({
+      name,
+      email,
+      passwordHash,
+      language,
+      preferences: {
+        notifications: true,
+        darkMode: false,
+        language
+      }
     });
-    console.log('✓ MongoDB connecté avec succès');
+
+    await user.save();
+
+    // Générer token JWT
+    const token = jwt.sign(
+      { 
+        id: user._id, 
+        email: user.email,
+        name: user.name 
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Compte créé avec succès',
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        language: user.language
+      }
+    });
+
   } catch (err) {
-    console.error('✗ Erreur connexion MongoDB:', err.message);
+    console.error('Erreur inscription:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erreur lors de l\'inscription' 
+    });
   }
-};
+});
 
-// PostgreSQL pour données structurées (utilisateurs, métadonnées)
-const sequelize = new Sequelize(
-  process.env.DATABASE_URL || 'postgres://localhost:5432/sionohmair_db',
-  {
-    logging: false,
-    dialect: 'postgres'
-  }
-);
-
-const connectPostgreSQL = async () => {
+// ============================================
+// CONNEXION
+// ============================================
+router.post('/login', validateLogin, async (req, res) => {
   try {
-    await sequelize.authenticate();
-    console.log('✓ PostgreSQL connecté avec succès');
+    // Validation
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ 
+        success: false, 
+        errors: errors.array() 
+      });
+    }
+
+    const { email, password } = req.body;
+
+    // Trouver l'utilisateur
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Email ou mot de passe incorrect' 
+      });
+    }
+
+    // Vérifier le mot de passe
+    const isMatch = await bcrypt.compare(password, user.passwordHash);
+    if (!isMatch) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Email ou mot de passe incorrect' 
+      });
+    }
+
+    // Mettre à jour la dernière connexion
+    user.lastLogin = new Date();
+    await user.save();
+
+    // Générer token JWT
+    const token = jwt.sign(
+      { 
+        id: user._id, 
+        email: user.email,
+        name: user.name 
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    res.json({
+      success: true,
+      message: 'Connexion réussie',
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        language: user.language,
+        preferences: user.preferences
+      }
+    });
+
   } catch (err) {
-    console.error('✗ Erreur connexion PostgreSQL:', err.message);
+    console.error('Erreur connexion:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erreur lors de la connexion' 
+    });
   }
-};
-
-// ============================================
-// ROUTES
-// ============================================
-const authRoutes = require('./routes/auth');
-const userRoutes = require('./routes/user');
-const eegRoutes = require('./routes/eeg');
-const audioRoutes = require('./routes/audio');
-const sessionRoutes = require('./routes/session');
-
-app.use('/api/auth', authRoutes);
-app.use('/api/user', userRoutes);
-app.use('/api/eeg', eegRoutes);
-app.use('/api/audio', audioRoutes);
-app.use('/api/session', sessionRoutes);
-
-// Route de test
-app.get('/', (req, res) => {
-  res.json({
-    message: 'API Sionohmair Insight - Backend opérationnel',
-    version: '2.0.0',
-    status: 'healthy',
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Route de santé
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'UP',
-    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-    postgresql: sequelize.authenticate().then(() => true).catch(() => false)
-  });
 });
 
 // ============================================
-// GESTION DES ERREURS
+// VÉRIFICATION TOKEN
 // ============================================
-// 404 - Route non trouvée
-app.use((req, res, next) => {
-  res.status(404).json({
-    success: false,
-    message: 'Route non trouvée',
-    path: req.path
-  });
-});
-
-// Gestionnaire d'erreurs global
-app.use((err, req, res, next) => {
-  console.error('Erreur serveur:', err);
-  res.status(err.status || 500).json({
-    success: false,
-    message: err.message || 'Erreur interne du serveur',
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
-  });
-});
-
-// ============================================
-// DÉMARRAGE DU SERVEUR
-// ============================================
-const PORT = process.env.PORT || 4000;
-
-const startServer = async () => {
+router.get('/verify', async (req, res) => {
   try {
-    await connectMongoDB();
-    await connectPostgreSQL();
+    const token = req.headers.authorization?.split(' ')[1];
     
-    app.listen(PORT, () => {
-      console.log(`
-╔════════════════════════════════════════════════╗
-║   🚀 Sionohmair Insight Backend démarré       ║
-║   📡 Port: ${PORT}                             ║
-║   🌍 Environment: ${process.env.NODE_ENV || 'development'}              ║
-║   📅 ${new Date().toLocaleString('fr-FR')}    ║
-╚════════════════════════════════════════════════╝
-      `);
-    });
-  } catch (err) {
-    console.error('Erreur au démarrage du serveur:', err);
-    process.exit(1);
-  }
-};
+    if (!token) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Token manquant' 
+      });
+    }
 
-// Gestion propre de l'arrêt
-process.on('SIGINT', async () => {
-  console.log('\n🛑 Arrêt du serveur...');
-  await mongoose.connection.close();
-  await sequelize.close();
-  process.exit(0);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id).select('-passwordHash');
+
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Utilisateur non trouvé' 
+      });
+    }
+
+    res.json({
+      success: true,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        language: user.language,
+        preferences: user.preferences
+      }
+    });
+
+  } catch (err) {
+    res.status(401).json({ 
+      success: false, 
+      message: 'Token invalide' 
+    });
+  }
 });
 
-startServer();
+// ============================================
+// RÉINITIALISATION MOT DE PASSE
+// ============================================
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    const user = await User.findOne({ email });
 
-module.exports = app;
+    if (!user) {
+      // Ne pas révéler si l'email existe
+      return res.json({ 
+        success: true, 
+        message: 'Si cet email existe, un lien de réinitialisation a été envoyé' 
+      });
+    }
+
+    // TODO: Implémenter l'envoi d'email avec token de réinitialisation
+    // Pour l'instant, retourner un message générique
+
+    res.json({ 
+      success: true, 
+      message: 'Si cet email existe, un lien de réinitialisation a été envoyé' 
+    });
+
+  } catch (err) {
+    console.error('Erreur réinitialisation:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Erreur lors de la réinitialisation' 
+    });
+  }
+});
+
+module.exports = router;
