@@ -1,162 +1,213 @@
-
-// frontend/src/App.js - Application React Native corrigée
-import React, { useEffect, useState } from 'react';
-import { NavigationContainer } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { StatusBar, ActivityIndicator, View } from 'react-native';
+// frontend/src/contexts/AuthContext.js - Gestion de l'authentification
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { I18nextProvider } from 'react-i18next';
-import i18n from './i18n/config';
+import api from '../services/api';
 
-// Screens
-import HomeScreen from './screens/HomeScreen';
-import LoginScreen from './screens/LoginScreen';
-import RegisterScreen from './screens/RegisterScreen';
-import DashboardScreen from './screens/DashboardScreen';
-import EEGSessionScreen from './screens/EEGSessionScreen';
-import DeviceConnectionScreen from './screens/DeviceConnectionScreen';
-import ProfileScreen from './screens/ProfileScreen';
-import SettingsScreen from './screens/SettingsScreen';
-import SessionHistoryScreen from './screens/SessionHistoryScreen';
-import SessionDetailsScreen from './screens/SessionDetailsScreen';
+const AuthContext = createContext({});
 
-// Context
-import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { DeviceProvider } from './contexts/DeviceContext';
-
-const Stack = createNativeStackNavigator();
-
-// Navigation pour utilisateurs authentifiés
-function AuthStack() {
-  return (
-    <Stack.Navigator
-      screenOptions={{
-        headerShown: true,
-        headerStyle: {
-          backgroundColor: '#3A7BD5',
-        },
-        headerTintColor: '#fff',
-        headerTitleStyle: {
-          fontWeight: 'bold',
-        },
-      }}
-    >
-      <Stack.Screen 
-        name="Dashboard" 
-        component={DashboardScreen}
-        options={{ title: 'Tableau de bord' }}
-      />
-      <Stack.Screen 
-        name="EEGSession" 
-        component={EEGSessionScreen}
-        options={{ title: 'Session EEG' }}
-      />
-      <Stack.Screen 
-        name="DeviceConnection" 
-        component={DeviceConnectionScreen}
-        options={{ title: 'Connexion dispositif' }}
-      />
-      <Stack.Screen 
-        name="Profile" 
-        component={ProfileScreen}
-        options={{ title: 'Profil' }}
-      />
-      <Stack.Screen 
-        name="Settings" 
-        component={SettingsScreen}
-        options={{ title: 'Paramètres' }}
-      />
-      <Stack.Screen 
-        name="SessionHistory" 
-        component={SessionHistoryScreen}
-        options={{ title: 'Historique' }}
-      />
-      <Stack.Screen 
-        name="SessionDetails" 
-        component={SessionDetailsScreen}
-        options={{ title: 'Détails session' }}
-      />
-    </Stack.Navigator>
-  );
-}
-
-// Navigation pour utilisateurs non authentifiés
-function GuestStack() {
-  return (
-    <Stack.Navigator
-      screenOptions={{
-        headerShown: false,
-      }}
-    >
-      <Stack.Screen name="Home" component={HomeScreen} />
-      <Stack.Screen name="Login" component={LoginScreen} />
-      <Stack.Screen name="Register" component={RegisterScreen} />
-    </Stack.Navigator>
-  );
-}
-
-// Composant de navigation principal
-function RootNavigator() {
-  const { user, loading } = useAuth();
-
-  if (loading) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#3A7BD5' }}>
-        <ActivityIndicator size="large" color="#ffffff" />
-      </View>
-    );
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth doit être utilisé dans un AuthProvider');
   }
+  return context;
+};
 
-  return (
-    <NavigationContainer>
-      {user ? <AuthStack /> : <GuestStack />}
-    </NavigationContainer>
-  );
-}
+export const AuthProvider = ({ children }) => {
+  const [user, setUser] = useState(null);
+  const [token, setToken] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-// Composant principal de l'application
-export default function App() {
-  const [isReady, setIsReady] = useState(false);
-
+  // Vérifier si l'utilisateur est déjà connecté au démarrage
   useEffect(() => {
-    // Initialisation de l'application
-    const initializeApp = async () => {
-      try {
-        // Charger les préférences utilisateur
-        const savedLanguage = await AsyncStorage.getItem('user_language');
-        if (savedLanguage) {
-          i18n.changeLanguage(savedLanguage);
-        }
-
-        // Autres initialisations...
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        setIsReady(true);
-      } catch (error) {
-        console.error('Erreur initialisation:', error);
-        setIsReady(true);
-      }
-    };
-
-    initializeApp();
+    checkAuthStatus();
   }, []);
 
-  if (!isReady) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#3A7BD5' }}>
-        <ActivityIndicator size="large" color="#ffffff" />
-      </View>
-    );
-  }
+  const checkAuthStatus = async () => {
+    try {
+      const storedToken = await AsyncStorage.getItem('auth_token');
+      const storedUser = await AsyncStorage.getItem('user_data');
+
+      if (storedToken && storedUser) {
+        setToken(storedToken);
+        setUser(JSON.parse(storedUser));
+        
+        // Configurer le token dans l'API
+        api.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
+        
+        // Vérifier si le token est toujours valide
+        try {
+          const response = await api.get('/auth/verify');
+          if (response.data.success) {
+            setUser(response.data.user);
+          } else {
+            await logout();
+          }
+        } catch (error) {
+          console.log('Token invalide, déconnexion');
+          await logout();
+        }
+      }
+    } catch (error) {
+      console.error('Erreur vérification auth:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const login = async (email, password) => {
+    try {
+      const response = await api.post('/auth/login', {
+        email,
+        password
+      });
+
+      if (response.data.success) {
+        const { token: newToken, user: userData } = response.data;
+        
+        // Sauvegarder les données
+        await AsyncStorage.setItem('auth_token', newToken);
+        await AsyncStorage.setItem('user_data', JSON.stringify(userData));
+        
+        // Mettre à jour l'état
+        setToken(newToken);
+        setUser(userData);
+        
+        // Configurer le token dans l'API
+        api.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
+        
+        return { success: true, user: userData };
+      }
+      
+      return { 
+        success: false, 
+        message: response.data.message || 'Erreur de connexion' 
+      };
+    } catch (error) {
+      console.error('Erreur login:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Erreur de connexion'
+      };
+    }
+  };
+
+  const register = async (name, email, password, language = 'fr') => {
+    try {
+      const response = await api.post('/auth/register', {
+        name,
+        email,
+        password,
+        language
+      });
+
+      if (response.data.success) {
+        const { token: newToken, user: userData } = response.data;
+        
+        // Sauvegarder les données
+        await AsyncStorage.setItem('auth_token', newToken);
+        await AsyncStorage.setItem('user_data', JSON.stringify(userData));
+        
+        // Mettre à jour l'état
+        setToken(newToken);
+        setUser(userData);
+        
+        // Configurer le token dans l'API
+        api.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
+        
+        return { success: true, user: userData };
+      }
+      
+      return { 
+        success: false, 
+        message: response.data.message || 'Erreur d\'inscription' 
+      };
+    } catch (error) {
+      console.error('Erreur register:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Erreur d\'inscription'
+      };
+    }
+  };
+
+  const logout = async () => {
+    try {
+      // Supprimer les données stockées
+      await AsyncStorage.removeItem('auth_token');
+      await AsyncStorage.removeItem('user_data');
+      
+      // Retirer le token de l'API
+      delete api.defaults.headers.common['Authorization'];
+      
+      // Réinitialiser l'état
+      setToken(null);
+      setUser(null);
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Erreur logout:', error);
+      return { success: false, message: 'Erreur de déconnexion' };
+    }
+  };
+
+  const updateUser = async (updates) => {
+    try {
+      const response = await api.put('/user/profile', updates);
+      
+      if (response.data.success) {
+        const updatedUser = { ...user, ...response.data.user };
+        setUser(updatedUser);
+        await AsyncStorage.setItem('user_data', JSON.stringify(updatedUser));
+        return { success: true, user: updatedUser };
+      }
+      
+      return { 
+        success: false, 
+        message: response.data.message || 'Erreur de mise à jour' 
+      };
+    } catch (error) {
+      console.error('Erreur update user:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Erreur de mise à jour'
+      };
+    }
+  };
+
+  const refreshUser = async () => {
+    try {
+      const response = await api.get('/user/profile');
+      
+      if (response.data.success) {
+        const updatedUser = response.data.user;
+        setUser(updatedUser);
+        await AsyncStorage.setItem('user_data', JSON.stringify(updatedUser));
+        return { success: true, user: updatedUser };
+      }
+      
+      return { success: false };
+    } catch (error) {
+      console.error('Erreur refresh user:', error);
+      return { success: false };
+    }
+  };
+
+  const value = {
+    user,
+    token,
+    loading,
+    isAuthenticated: !!user,
+    login,
+    register,
+    logout,
+    updateUser,
+    refreshUser
+  };
 
   return (
-    <I18nextProvider i18n={i18n}>
-      <AuthProvider>
-        <DeviceProvider>
-          <StatusBar barStyle="light-content" backgroundColor="#3A7BD5" />
-          <RootNavigator />
-        </DeviceProvider>
-      </AuthProvider>
-    </I18nextProvider>
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
   );
-}
+};
