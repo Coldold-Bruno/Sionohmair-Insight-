@@ -783,4 +783,1147 @@ services:
     environment:
       - POSTGRES_DB=sionohmair_db
       - POSTGRES_USER=postgres
-      - POSTGRES_PASS 
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+volumes:
+  mongo_data:
+  postgres_data:
+9.3 PM2 Ecosystem
+// ecosystem.config.js
+module.exports = {
+  apps: [{
+    name: 'sionohmair-api',
+    script: './backend/server.js',
+    instances: 'max',
+    exec_mode: 'cluster',
+    env: {
+      NODE_ENV: 'production',
+      PORT: 4000
+    },
+    error_file: './logs/err.log',
+    out_file: './logs/out.log',
+    log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    merge_logs: true,
+    max_memory_restart: '1G',
+    autorestart: true,
+    watch: false
+  }]
+};
+9.4 CI/CD - GitHub Actions
+# .github/workflows/deploy.yml
+name: Deploy Sionohmair Insight
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+    
+    - name: Install dependencies
+      run: |
+        cd backend
+        npm ci
+    
+    - name: Run tests
+      run: |
+        cd backend
+        npm test
+  
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Deploy to server
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.SERVER_HOST }}
+        username: ${{ secrets.SERVER_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          cd /var/www/sionohmair
+          git pull origin main
+          cd backend
+          npm install
+          pm2 restart sionohmair-api
+10. Tests et validation
+10.1 Tests Backend (Jest)
+// backend/tests/auth.test.js
+const request = require('supertest');
+const app = require('../server');
+const User = require('../models/User');
+const mongoose = require('mongoose');
+
+describe('Authentication API', () => {
+  beforeAll(async () => {
+    await mongoose.connect(process.env.MONGODB_URI_TEST);
+  });
+
+  afterAll(async () => {
+    await User.deleteMany({});
+    await mongoose.connection.close();
+  });
+
+  describe('POST /api/auth/register', () => {
+    it('should register a new user', async () => {
+      const res = await request(app)
+        .post('/api/auth/register')
+        .send({
+          name: 'Test User',
+          email: 'test@example.com',
+          password: 'Test1234!',
+          language: 'fr'
+        });
+
+      expect(res.statusCode).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.token).toBeDefined();
+      expect(res.body.user.email).toBe('test@example.com');
+    });
+
+    it('should reject duplicate email', async () => {
+      const res = await request(app)
+        .post('/api/auth/register')
+        .send({
+          name: 'Test User',
+          email: 'test@example.com',
+          password: 'Test1234!',
+          language: 'fr'
+        });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('should reject weak password', async () => {
+      const res = await request(app)
+        .post('/api/auth/register')
+        .send({
+          name: 'Test User',
+          email: 'test2@example.com',
+          password: 'weak',
+          language: 'fr'
+        });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.errors).toBeDefined();
+    });
+  });
+
+  describe('POST /api/auth/login', () => {
+    it('should login existing user', async () => {
+      const res = await request(app)
+        .post('/api/auth/login')
+        .send({
+          email: 'test@example.com',
+          password: 'Test1234!'
+        });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.token).toBeDefined();
+    });
+
+    it('should reject wrong password', async () => {
+      const res = await request(app)
+        .post('/api/auth/login')
+        .send({
+          email: 'test@example.com',
+          password: 'WrongPass123!'
+        });
+
+      expect(res.statusCode).toBe(401);
+      expect(res.body.success).toBe(false);
+    });
+  });
+});
+10.2 Tests d'intégration EEG
+// backend/tests/eeg.test.js
+const request = require('supertest');
+const app = require('../server');
+const EEGSession = require('../models/EEGSession');
+
+describe('EEG API', () => {
+  let authToken;
+  let sessionId;
+
+  beforeAll(async () => {
+    // S'authentifier pour obtenir un token
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({
+        email: 'test@example.com',
+        password: 'Test1234!'
+      });
+    
+    authToken = res.body.token;
+  });
+
+  describe('POST /api/eeg/session/start', () => {
+    it('should create a new EEG session', async () => {
+      const res = await request(app)
+        .post('/api/eeg/session/start')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          deviceType: 'muse',
+          deviceId: 'MUSE-TEST-001'
+        });
+
+      expect(res.statusCode).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.sessionId).toBeDefined();
+      
+      sessionId = res.body.sessionId;
+    });
+
+    it('should reject without authentication', async () => {
+      const res = await request(app)
+        .post('/api/eeg/session/start')
+        .send({
+          deviceType: 'muse',
+          deviceId: 'MUSE-TEST-001'
+        });
+
+      expect(res.statusCode).toBe(401);
+    });
+  });
+
+  describe('POST /api/eeg/session/:id/data', () => {
+    it('should accept EEG data', async () => {
+      const res = await request(app)
+        .post(`/api/eeg/session/${sessionId}/data`)
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          timestamp: new Date().toISOString(),
+          channels: {
+            TP9: 850.5,
+            AF7: 820.3,
+            AF8: 815.7,
+            TP10: 840.2
+          },
+          quality: 'good'
+        });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+  });
+
+  describe('POST /api/eeg/session/:id/stop', () => {
+    it('should stop session and return stats', async () => {
+      const res = await request(app)
+        .post(`/api/eeg/session/${sessionId}/stop`)
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.duration).toBeDefined();
+      expect(res.body.statistics).toBeDefined();
+    });
+  });
+});
+10.3 Tests Frontend (React Native Testing Library)
+// frontend/src/__tests__/LoginScreen.test.js
+import React from 'react';
+import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import LoginScreen from '../screens/LoginScreen';
+import { AuthProvider } from '../contexts/AuthContext';
+
+describe('LoginScreen', () => {
+  it('should render login form', () => {
+    const { getByPlaceholderText, getByText } = render(
+      <AuthProvider>
+        <LoginScreen />
+      </AuthProvider>
+    );
+
+    expect(getByPlaceholderText('Email')).toBeTruthy();
+    expect(getByPlaceholderText('Mot de passe')).toBeTruthy();
+    expect(getByText('Se connecter')).toBeTruthy();
+  });
+
+  it('should validate email format', async () => {
+    const { getByPlaceholderText, getByText, findByText } = render(
+      <AuthProvider>
+        <LoginScreen />
+      </AuthProvider>
+    );
+
+    const emailInput = getByPlaceholderText('Email');
+    const submitButton = getByText('Se connecter');
+
+    fireEvent.changeText(emailInput, 'invalid-email');
+    fireEvent.press(submitButton);
+
+    const errorMessage = await findByText(/Email invalide/i);
+    expect(errorMessage).toBeTruthy();
+  });
+
+  it('should login successfully', async () => {
+    const mockNavigate = jest.fn();
+    const { getByPlaceholderText, getByText } = render(
+      <AuthProvider>
+        <LoginScreen navigation={{ navigate: mockNavigate }} />
+      </AuthProvider>
+    );
+
+    const emailInput = getByPlaceholderText('Email');
+    const passwordInput = getByPlaceholderText('Mot de passe');
+    const submitButton = getByText('Se connecter');
+
+    fireEvent.changeText(emailInput, 'test@example.com');
+    fireEvent.changeText(passwordInput, 'Test1234!');
+    fireEvent.press(submitButton);
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith('Dashboard');
+    });
+  });
+});
+10.4 Tests Bluetooth Service
+// frontend/src/__tests__/BluetoothService.test.js
+import BluetoothService from '../services/bluetooth';
+import { BleManager } from 'react-native-ble-plx';
+
+jest.mock('react-native-ble-plx');
+
+describe('BluetoothService', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('should scan for devices', async () => {
+    const mockStartDeviceScan = jest.fn((_, __, callback) => {
+      // Simuler la découverte d'un device
+      setTimeout(() => {
+        callback(null, {
+          id: '123',
+          name: 'Muse-A1B2',
+          rssi: -60
+        });
+      }, 100);
+    });
+
+    BleManager.mockImplementation(() => ({
+      startDeviceScan: mockStartDeviceScan,
+      stopDeviceScan: jest.fn()
+    }));
+
+    const devices = await BluetoothService.scanDevices(200);
+    
+    expect(devices.length).toBeGreaterThan(0);
+    expect(devices[0].name).toContain('Muse');
+  });
+
+  it('should connect to device', async () => {
+    const mockConnect = jest.fn().mockResolvedValue({
+      id: '123',
+      name: 'Muse-A1B2',
+      discoverAllServicesAndCharacteristics: jest.fn()
+    });
+
+    BleManager.mockImplementation(() => ({
+      connectToDevice: mockConnect
+    }));
+
+    const device = await BluetoothService.connectToDevice('123');
+    
+    expect(mockConnect).toHaveBeenCalledWith('123');
+    expect(device).toBeDefined();
+  });
+});
+10.5 Script de tests complet
+#!/bin/bash
+# backend/scripts/run-tests.sh
+
+echo "🧪 Démarrage des tests Sionohmair Insight"
+echo "=========================================="
+
+# Variables d'environnement de test
+export NODE_ENV=test
+export MONGODB_URI_TEST=mongodb://localhost:27017/sionohmair_test
+export JWT_SECRET=test_secret_key
+
+# Couleurs
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+# Nettoyer la base de test
+echo "🗑️  Nettoyage de la base de données de test..."
+mongo sionohmair_test --eval "db.dropDatabase()"
+
+# Tests Backend
+echo ""
+echo "📦 Tests Backend..."
+cd backend
+npm test -- --coverage --verbose
+
+if [ $? -eq 0 ]; then
+  echo -e "${GREEN}✓ Tests backend réussis${NC}"
+else
+  echo -e "${RED}✗ Tests backend échoués${NC}"
+  exit 1
+fi
+
+# Tests Frontend
+echo ""
+echo "📱 Tests Frontend..."
+cd ../frontend
+npm test -- --coverage
+
+if [ $? -eq 0 ]; then
+  echo -e "${GREEN}✓ Tests frontend réussis${NC}"
+else
+  echo -e "${RED}✗ Tests frontend échoués${NC}"
+  exit 1
+fi
+
+echo ""
+echo -e "${GREEN}✓ Tous les tests sont passés avec succès!${NC}"
+11. Maintenance et monitoring
+11.1 Logging avec Winston
+// backend/utils/logger.js
+const winston = require('winston');
+const path = require('path');
+
+const logger = winston.createLogger({
+  level: process.env.LOG_LEVEL || 'info',
+  format: winston.format.combine(
+    winston.format.timestamp({
+      format: 'YYYY-MM-DD HH:mm:ss'
+    }),
+    winston.format.errors({ stack: true }),
+    winston.format.splat(),
+    winston.format.json()
+  ),
+  defaultMeta: { service: 'sionohmair-api' },
+  transports: [
+    // Fichier pour les erreurs
+    new winston.transports.File({
+      filename: path.join(__dirname, '../logs/error.log'),
+      level: 'error',
+      maxsize: 5242880, // 5MB
+      maxFiles: 5
+    }),
+    // Fichier pour tous les logs
+    new winston.transports.File({
+      filename: path.join(__dirname, '../logs/combined.log'),
+      maxsize: 5242880,
+      maxFiles: 5
+    })
+  ]
+});
+
+// En développement, logger dans la console
+if (process.env.NODE_ENV !== 'production') {
+  logger.add(new winston.transports.Console({
+    format: winston.format.combine(
+      winston.format.colorize(),
+      winston.format.simple()
+    )
+  }));
+}
+
+// Fonctions helper
+logger.logRequest = (req, res, next) => {
+  logger.info('HTTP Request', {
+    method: req.method,
+    url: req.url,
+    ip: req.ip,
+    userAgent: req.get('user-agent')
+  });
+  next();
+};
+
+logger.logError = (err, context = {}) => {
+  logger.error(err.message, {
+    stack: err.stack,
+    ...context
+  });
+};
+
+module.exports = logger;
+Utilisation dans le code :
+// Dans server.js
+const logger = require('./utils/logger');
+
+// Logger les requêtes
+app.use(logger.logRequest);
+
+// Logger les erreurs
+app.use((err, req, res, next) => {
+  logger.logError(err, {
+    url: req.url,
+    method: req.method,
+    userId: req.user?.id
+  });
+  next(err);
+});
+11.2 Monitoring avec PM2
+# Commandes PM2 essentielles
+
+# Démarrer l'application
+pm2 start ecosystem.config.js
+
+# Voir les logs en temps réel
+pm2 logs sionohmair-api
+
+# Voir le statut
+pm2 status
+
+# Monitorer les ressources
+pm2 monit
+
+# Redémarrer sans downtime
+pm2 reload sionohmair-api
+
+# Voir les métriques
+pm2 describe sionohmair-api
+
+# Sauvegarder la configuration
+pm2 save
+
+# Setup au démarrage du serveur
+pm2 startup
+11.3 Health Check Endpoint
+// backend/routes/health.js
+const express = require('express');
+const router = express.Router();
+const mongoose = require('mongoose');
+const { Sequelize } = require('sequelize');
+const os = require('os');
+
+router.get('/health', async (req, res) => {
+  const healthCheck = {
+    status: 'UP',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV,
+    services: {}
+  };
+
+  // Vérifier MongoDB
+  try {
+    healthCheck.services.mongodb = {
+      status: mongoose.connection.readyState === 1 ? 'UP' : 'DOWN',
+      responseTime: await checkMongoDBLatency()
+    };
+  } catch (error) {
+    healthCheck.services.mongodb = {
+      status: 'DOWN',
+      error: error.message
+    };
+    healthCheck.status = 'DEGRADED';
+  }
+
+  // Vérifier PostgreSQL
+  try {
+    const sequelize = req.app.get('sequelize');
+    await sequelize.authenticate();
+    healthCheck.services.postgresql = {
+      status: 'UP',
+      responseTime: await checkPostgreSQLLatency(sequelize)
+    };
+  } catch (error) {
+    healthCheck.services.postgresql = {
+      status: 'DOWN',
+      error: error.message
+    };
+    healthCheck.status = 'DEGRADED';
+  }
+
+  // Métriques système
+  healthCheck.system = {
+    memory: {
+      total: Math.round(os.totalmem() / 1024 / 1024),
+      free: Math.round(os.freemem() / 1024 / 1024),
+      used: Math.round((os.totalmem() - os.freemem()) / 1024 / 1024)
+    },
+    cpu: {
+      cores: os.cpus().length,
+      loadAverage: os.loadavg()
+    },
+    process: {
+      memory: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+      pid: process.pid
+    }
+  };
+
+  const statusCode = healthCheck.status === 'UP' ? 200 : 503;
+  res.status(statusCode).json(healthCheck);
+});
+
+async function checkMongoDBLatency() {
+  const start = Date.now();
+  await mongoose.connection.db.admin().ping();
+  return Date.now() - start;
+}
+
+async function checkPostgreSQLLatency(sequelize) {
+  const start = Date.now();
+  await sequelize.query('SELECT 1');
+  return Date.now() - start;
+}
+
+module.exports = router;
+11.4 Métriques et Analytics
+// backend/services/analytics.js
+const { Sequelize } = require('sequelize');
+
+class AnalyticsService {
+  constructor(sequelize) {
+    this.sequelize = sequelize;
+  }
+
+  // Enregistrer un événement
+  async trackEvent(userId, eventType, eventData = {}) {
+    try {
+      await this.sequelize.query(
+        `INSERT INTO analytics_events (user_id, event_type, event_data, timestamp)
+         VALUES ($1, $2, $3, NOW())`,
+        {
+          bind: [userId, eventType, JSON.stringify(eventData)],
+          type: Sequelize.QueryTypes.INSERT
+        }
+      );
+    } catch (error) {
+      console.error('Error tracking event:', error);
+    }
+  }
+
+  // Obtenir les statistiques d'utilisation
+  async getUserStats(userId, days = 30) {
+    const [results] = await this.sequelize.query(
+      `SELECT 
+        COUNT(DISTINCT session_id) as total_sessions,
+        SUM(duration) as total_duration,
+        AVG(duration) as avg_duration,
+        AVG(meditation_score) as avg_meditation,
+        AVG(focus_score) as avg_focus
+       FROM sessions_metadata
+       WHERE user_id = $1 
+       AND start_time >= NOW() - INTERVAL '${days} days'`,
+      {
+        bind: [userId],
+        type: Sequelize.QueryTypes.SELECT
+      }
+    );
+
+    return results[0];
+  }
+
+  // Obtenir les tendances globales
+  async getGlobalStats() {
+    const [results] = await this.sequelize.query(
+      `SELECT 
+        COUNT(DISTINCT user_id) as total_users,
+        COUNT(*) as total_sessions,
+        SUM(duration) as total_duration,
+        AVG(meditation_score) as avg_meditation
+       FROM sessions_metadata
+       WHERE start_time >= NOW() - INTERVAL '7 days'`,
+      {
+        type: Sequelize.QueryTypes.SELECT
+      }
+    );
+
+    return results[0];
+  }
+
+  // Obtenir les dispositifs les plus utilisés
+  async getDeviceStats() {
+    const results = await this.sequelize.query(
+      `SELECT 
+        device_type,
+        COUNT(*) as usage_count,
+        AVG(duration) as avg_duration
+       FROM sessions_metadata
+       WHERE start_time >= NOW() - INTERVAL '30 days'
+       GROUP BY device_type
+       ORDER BY usage_count DESC`,
+      {
+        type: Sequelize.QueryTypes.SELECT
+      }
+    );
+
+    return results;
+  }
+}
+
+module.exports = AnalyticsService;
+11.5 Backup automatique
+#!/bin/bash
+# backend/scripts/backup.sh
+
+# Configuration
+BACKUP_DIR="/var/backups/sionohmair"
+DATE=$(date +%Y%m%d_%H%M%S)
+RETENTION_DAYS=30
+
+# Créer le dossier de backup
+mkdir -p $BACKUP_DIR
+
+echo "🔄 Démarrage du backup - $DATE"
+
+# Backup MongoDB
+echo "📦 Backup MongoDB..."
+mongodump --uri="$MONGODB_URI" --out="$BACKUP_DIR/mongo_$DATE"
+tar -czf "$BACKUP_DIR/mongo_$DATE.tar.gz" "$BACKUP_DIR/mongo_$DATE"
+rm -rf "$BACKUP_DIR/mongo_$DATE"
+
+# Backup PostgreSQL
+echo "🐘 Backup PostgreSQL..."
+pg_dump "$DATABASE_URL" > "$BACKUP_DIR/postgres_$DATE.sql"
+gzip "$BACKUP_DIR/postgres_$DATE.sql"
+
+# Supprimer les anciens backups
+echo "🗑️  Nettoyage des anciens backups..."
+find $BACKUP_DIR -name "*.tar.gz" -mtime +$RETENTION_DAYS -delete
+find $BACKUP_DIR -name "*.sql.gz" -mtime +$RETENTION_DAYS -delete
+
+echo "✅ Backup terminé avec succès!"
+
+# Optionnel: Upload vers S3 ou autre cloud storage
+# aws s3 sync $BACKUP_DIR s3://sionohmair-backups/
+Ajouter au crontab :
+# Backup quotidien à 2h du matin
+0 2 * * * /var/www/sionohmair/backend/scripts/backup.sh >> /var/log/sionohmair-backup.log 2>&1
+11.6 Alertes et notifications
+// backend/services/alerting.js
+const nodemailer = require('nodemailer');
+const logger = require('../utils/logger');
+
+class AlertingService {
+  constructor() {
+    this.transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: process.env.SMTP_PORT,
+      secure: true,
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS
+      }
+    });
+
+    this.adminEmail = process.env.ADMIN_EMAIL;
+  }
+
+  // Envoyer une alerte critique
+  async sendCriticalAlert(title, message, details = {}) {
+    try {
+      await this.transporter.sendMail({
+        from: process.env.SMTP_USER,
+        to: this.adminEmail,
+        subject: `🚨 ALERTE CRITIQUE - ${title}`,
+        html: `
+          <h2>Alerte Critique - Sionohmair Insight</h2>
+          <p><strong>${title}</strong></p>
+          <p>${message}</p>
+          <hr>
+          <h3>Détails:</h3>
+          <pre>${JSON.stringify(details, null, 2)}</pre>
+          <hr>
+          <p>Timestamp: ${new Date().toISOString()}</p>
+          <p>Environnement: ${process.env.NODE_ENV}</p>
+        `
+      });
+
+      logger.warn('Critical alert sent', { title, message });
+    } catch (error) {
+      logger.error('Failed to send alert email', error);
+    }
+  }
+
+  // Alerte si erreur BD
+  async alertDatabaseError(dbType, error) {
+    await this.sendCriticalAlert(
+      `Erreur Base de données ${dbType}`,
+      `La connexion à ${dbType} a échoué`,
+      {
+        error: error.message,
+        stack: error.stack
+      }
+    );
+  }
+
+  // Alerte si trop d'erreurs
+  async alertHighErrorRate(errorCount, timeWindow) {
+    await this.sendCriticalAlert(
+      'Taux d\'erreurs élevé',
+      `${errorCount} erreurs détectées en ${timeWindow} minutes`,
+      {
+        errorCount,
+        timeWindow,
+        timestamp: new Date().toISOString()
+      }
+    );
+  }
+
+  // Alerte si CPU/Mémoire élevés
+  async alertHighResourceUsage(type, percentage) {
+    if (percentage > 90) {
+      await this.sendCriticalAlert(
+        `Usage ${type} critique`,
+        `${type} à ${percentage}%`,
+        {
+          type,
+          percentage,
+          pid: process.pid
+        }
+      );
+    }
+  }
+}
+
+module.exports = new AlertingService();
+12. Documentation API complète
+12.1 Format de réponse standardisé
+Toutes les réponses API suivent ce format :
+// Succès
+{
+  "success": true,
+  "message": "Description de l'action",
+  "data": { ... },        // Données retournées
+  "meta": {               // Métadonnées (optionnel)
+    "timestamp": "2024-11-25T10:30:00Z",
+    "requestId": "req_abc123"
+  }
+}
+
+// Erreur
+{
+  "success": false,
+  "message": "Description de l'erreur",
+  "errors": [             // Détails des erreurs (optionnel)
+    {
+      "field": "email",
+      "message": "Email invalide"
+    }
+  ],
+  "code": "VALIDATION_ERROR"
+}
+12.2 Codes d'erreur personnalisés
+// backend/utils/errorCodes.js
+module.exports = {
+  // Authentication
+  AUTH_INVALID_CREDENTIALS: 'AUTH_001',
+  AUTH_TOKEN_EXPIRED: 'AUTH_002',
+  AUTH_TOKEN_INVALID: 'AUTH_003',
+  AUTH_EMAIL_EXISTS: 'AUTH_004',
+  
+  // Validation
+  VALIDATION_ERROR: 'VAL_001',
+  VALIDATION_WEAK_PASSWORD: 'VAL_002',
+  
+  // EEG
+  EEG_SESSION_NOT_FOUND: 'EEG_001',
+  EEG_DEVICE_NOT_CONNECTED: 'EEG_002',
+  EEG_INVALID_DATA: 'EEG_003',
+  
+  // Database
+  DB_CONNECTION_ERROR: 'DB_001',
+  DB_QUERY_ERROR: 'DB_002',
+  
+  // Rate Limiting
+  RATE_LIMIT_EXCEEDED: 'RATE_001'
+};
+12.3 Postman Collection
+{
+  "info": {
+    "name": "Sionohmair Insight API",
+    "description": "Collection complète des endpoints API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{auth_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test User\",\n  \"email\": \"test@example.com\",\n  \"password\": \"Test1234!\",\n  \"language\": \"fr\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/register",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const response = pm.response.json();",
+                  "if (response.token) {",
+                  "  pm.environment.set('auth_token', response.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"password\": \"Test1234!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "login"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "EEG Sessions",
+      "item": [
+        {
+          "name": "Start Session",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceType\": \"muse\",\n  \"deviceId\": \"MUSE-A1B2\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/eeg/session/start",
+              "host": ["{{base_url}}"],
+              "path": ["api", "eeg", "session", "start"]
+            }
+          }
+        },
+        {
+          "name": "Send Data",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"timestamp\": \"{{$isoTimestamp}}\",\n  \"channels\": {\n    \"TP9\": 850.5,\n    \"AF7\": 820.3,\n    \"AF8\": 815.7,\n    \"TP10\": 840.2\n  },\n  \"quality\": \"good\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/eeg/session/{{session_id}}/data",
+              "host": ["{{base_url}}"],
+              "path": ["api", "eeg", "session", "{{session_id}}", "data"]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:4000",
+      "type": "string"
+    }
+  ]
+}
+13. Checklist finale de déploiement
+✅ Configuration serveur
+[ ] Node.js 18+ installé
+[ ] MongoDB 5.0+ configuré et sécurisé
+[ ] PostgreSQL 14+ configuré et sécurisé
+[ ] Redis installé (optionnel mais recommandé)
+[ ] Certificats SSL configurés
+[ ] Firewall configuré (ports 80, 443, 4000)
+[ ] Utilisateur système non-root créé
+✅ Backend
+[ ] Variables .env configurées
+[ ] JWT_SECRET généré (32+ caractères aléatoires)
+[ ] Connexions BD testées
+[ ] Migrations de BD exécutées
+[ ] PM2 configuré et testé
+[ ] Logs configurés dans /var/log/sionohmair/
+[ ] Backup automatique configuré
+[ ] Health check endpoint testé
+[ ] Rate limiting activé
+[ ] CORS correctement configuré
+✅ Frontend
+[ ] Build de production généré
+[ ] Variables d'environnement configurées
+[ ] API_URL pointe vers production
+[ ] Permissions Bluetooth configurées
+[ ] Icônes et splash screens générés
+[ ] Code signing (iOS) configuré
+[ ] Keystore (Android) généré et sauvegardé
+✅ Sécurité
+[ ] HTTPS activé
+[ ] Headers de sécurité configurés
+[ ] SQL injection protection
+[ ] XSS protection
+[ ] CSRF protection
+[ ] Mots de passe avec bcrypt (10+ rounds)
+[ ] Tokens JWT avec expiration
+[ ] Validation de toutes les entrées
+✅ Monitoring
+[ ] PM2 monitoring actif
+[ ] Logs centralisés
+[ ] Alertes email configurées
+[ ] Health check automatique
+[ ] Métriques de performance suivies
+✅ Tests
+[ ] Tests unitaires passés
+[ ] Tests d'intégration passés
+[ ] Tests E2E sur devices réels
+[ ] Tests de charge effectués
+[ ] Scénarios utilisateurs validés
+✅ Documentation
+[ ] README.md à jour
+[ ] API documentation complète
+[ ] Guide utilisateur créé
+[ ] Commentaires de code
+[ ] Architecture documentée
+14. Commandes rapides de référence
+Développement local
+# Démarrer tout (avec Docker)
+docker-compose up -d
+
+# Backend seulement
+cd backend && npm run dev
+
+# Frontend seulement
+cd frontend && npm start
+
+# Tests
+npm test
+
+# Logs
+pm2 logs sionohmair-api
+docker-compose logs -f backend
+Production
+# Déployer
+git pull origin main
+cd backend && npm install --production
+pm2 reload sionohmair-api
+
+# Vérifier le statut
+pm2 status
+curl http://localhost:4000/health
+
+# Voir les logs
+pm2 logs sionohmair-api --lines 100
+
+# Backup manuel
+./backend/scripts/backup.sh
+
+# Redémarrer services
+pm2 restart sionohmair-api
+sudo systemctl restart mongodb
+sudo systemctl restart postgresql
+Debugging
+# Vérifier les connexions BD
+mongo sionohmair --eval "db.stats()"
+psql -d sionohmair_db -c "SELECT version();"
+
+# Tester l'API
+curl -X POST http://localhost:4000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"Test1234!"}'
+
+# Monitorer les ressources
+htop
+pm2 monit
+
+# Analyser les logs
+tail -f /var/log/sionohmair/error.log
+grep "ERROR" /var/log/sionohmair/combined.log | tail -20
+15. Support et ressources
+Documentation technique
+API Reference: https://docs.sionohmair.com/api
+Architecture: https://docs.sionohmair.com/architecture
+Guides: https://docs.sionohmair.com/guides
+Ressources externes
+Muse Developer
+Emotiv API
+React Native Docs
+Node.js Best Practices
+Contact support
+Email: dev@sionohmair.com
+Issues GitHub: https://github.com/Coldold-Bruno/Sionohmair-Insight-/issues
+Slack: sionohmair-dev.slack.com
+🎓 Conclusion
+Vous disposez maintenant d'un livrable complet pour développer, déployer et maintenir Sionohmair Insight. Ce document couvre:
+✅ Architecture complète (Backend Node.js + Frontend React Native)
+✅ Intégration Bluetooth avec capteurs EEG
+✅ Base de données MongoDB + PostgreSQL
+✅ Authentification JWT sécurisée
+✅ API REST documentée
+✅ Tests automatisés
+✅ Déploiement Docker + PM2
+✅ Monitoring et alertes
+✅ Scripts de maintenance
+Prochaines étapes recommandées:
+Configurer l'environnement de développement
+Implémenter l'analyse FFT des ondes cérébrales
+Ajouter le Machine Learning pour les insights
+Développer l'export PDF
+Créer les notifications push
+Mettre en place le CI/CD complet
+Bon développement ! 🚀 
