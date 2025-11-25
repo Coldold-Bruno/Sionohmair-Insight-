@@ -1,213 +1,66 @@
-// frontend/src/contexts/AuthContext.js - Gestion de l'authentification
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import api from '../services/api';
-
-const AuthContext = createContext({});
-
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth doit être utilisé dans un AuthProvider');
+{
+  "name": "sionohmair-insight-frontend",
+  "version": "2.0.0",
+  "description": "Application mobile Sionohmair Insight - Développement de conscience spirituelle via EEG",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "react-native start",
+    "android": "react-native run-android",
+    "ios": "react-native run-ios",
+    "test": "jest",
+    "lint": "eslint .",
+    "clean": "cd android && ./gradlew clean && cd ../ios && pod deintegrate && pod install"
+  },
+  "dependencies": {
+    "react": "18.2.0",
+    "react-native": "0.72.7",
+    "@react-navigation/native": "^6.1.9",
+    "@react-navigation/native-stack": "^6.9.17",
+    "react-native-screens": "^3.27.0",
+    "react-native-safe-area-context": "^4.7.4",
+    "react-native-gesture-handler": "^2.14.0",
+    "react-native-reanimated": "^3.6.0",
+    "@react-native-async-storage/async-storage": "^1.19.5",
+    "axios": "^1.6.2",
+    "i18next": "^23.7.6",
+    "react-i18next": "^13.5.0",
+    "react-native-chart-kit": "^6.12.0",
+    "react-native-svg": "^14.0.0",
+    "react-native-ble-plx": "^3.1.2",
+    "react-native-permissions": "^3.10.1",
+    "react-native-vector-icons": "^10.0.2",
+    "react-native-modal": "^13.0.1",
+    "date-fns": "^3.0.0",
+    "zustand": "^4.4.7"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.23.5",
+    "@babel/preset-env": "^7.23.5",
+    "@babel/runtime": "^7.23.5",
+    "@react-native/eslint-config": "^0.73.1",
+    "@react-native/metro-config": "^0.73.2",
+    "@testing-library/react-native": "^12.4.2",
+    "babel-jest": "^29.7.0",
+    "babel-plugin-module-resolver": "^5.0.0",
+    "eslint": "^8.55.0",
+    "jest": "^29.7.0",
+    "metro-react-native-babel-preset": "^0.77.0",
+    "react-test-renderer": "18.2.0"
+  },
+  "jest": {
+    "preset": "react-native",
+    "moduleFileExtensions": [
+      "ts",
+      "tsx",
+      "js",
+      "jsx",
+      "json",
+      "node"
+    ]
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
   }
-  return context;
-};
-
-export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [token, setToken] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  // Vérifier si l'utilisateur est déjà connecté au démarrage
-  useEffect(() => {
-    checkAuthStatus();
-  }, []);
-
-  const checkAuthStatus = async () => {
-    try {
-      const storedToken = await AsyncStorage.getItem('auth_token');
-      const storedUser = await AsyncStorage.getItem('user_data');
-
-      if (storedToken && storedUser) {
-        setToken(storedToken);
-        setUser(JSON.parse(storedUser));
-        
-        // Configurer le token dans l'API
-        api.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
-        
-        // Vérifier si le token est toujours valide
-        try {
-          const response = await api.get('/auth/verify');
-          if (response.data.success) {
-            setUser(response.data.user);
-          } else {
-            await logout();
-          }
-        } catch (error) {
-          console.log('Token invalide, déconnexion');
-          await logout();
-        }
-      }
-    } catch (error) {
-      console.error('Erreur vérification auth:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const login = async (email, password) => {
-    try {
-      const response = await api.post('/auth/login', {
-        email,
-        password
-      });
-
-      if (response.data.success) {
-        const { token: newToken, user: userData } = response.data;
-        
-        // Sauvegarder les données
-        await AsyncStorage.setItem('auth_token', newToken);
-        await AsyncStorage.setItem('user_data', JSON.stringify(userData));
-        
-        // Mettre à jour l'état
-        setToken(newToken);
-        setUser(userData);
-        
-        // Configurer le token dans l'API
-        api.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
-        
-        return { success: true, user: userData };
-      }
-      
-      return { 
-        success: false, 
-        message: response.data.message || 'Erreur de connexion' 
-      };
-    } catch (error) {
-      console.error('Erreur login:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Erreur de connexion'
-      };
-    }
-  };
-
-  const register = async (name, email, password, language = 'fr') => {
-    try {
-      const response = await api.post('/auth/register', {
-        name,
-        email,
-        password,
-        language
-      });
-
-      if (response.data.success) {
-        const { token: newToken, user: userData } = response.data;
-        
-        // Sauvegarder les données
-        await AsyncStorage.setItem('auth_token', newToken);
-        await AsyncStorage.setItem('user_data', JSON.stringify(userData));
-        
-        // Mettre à jour l'état
-        setToken(newToken);
-        setUser(userData);
-        
-        // Configurer le token dans l'API
-        api.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
-        
-        return { success: true, user: userData };
-      }
-      
-      return { 
-        success: false, 
-        message: response.data.message || 'Erreur d\'inscription' 
-      };
-    } catch (error) {
-      console.error('Erreur register:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Erreur d\'inscription'
-      };
-    }
-  };
-
-  const logout = async () => {
-    try {
-      // Supprimer les données stockées
-      await AsyncStorage.removeItem('auth_token');
-      await AsyncStorage.removeItem('user_data');
-      
-      // Retirer le token de l'API
-      delete api.defaults.headers.common['Authorization'];
-      
-      // Réinitialiser l'état
-      setToken(null);
-      setUser(null);
-      
-      return { success: true };
-    } catch (error) {
-      console.error('Erreur logout:', error);
-      return { success: false, message: 'Erreur de déconnexion' };
-    }
-  };
-
-  const updateUser = async (updates) => {
-    try {
-      const response = await api.put('/user/profile', updates);
-      
-      if (response.data.success) {
-        const updatedUser = { ...user, ...response.data.user };
-        setUser(updatedUser);
-        await AsyncStorage.setItem('user_data', JSON.stringify(updatedUser));
-        return { success: true, user: updatedUser };
-      }
-      
-      return { 
-        success: false, 
-        message: response.data.message || 'Erreur de mise à jour' 
-      };
-    } catch (error) {
-      console.error('Erreur update user:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Erreur de mise à jour'
-      };
-    }
-  };
-
-  const refreshUser = async () => {
-    try {
-      const response = await api.get('/user/profile');
-      
-      if (response.data.success) {
-        const updatedUser = response.data.user;
-        setUser(updatedUser);
-        await AsyncStorage.setItem('user_data', JSON.stringify(updatedUser));
-        return { success: true, user: updatedUser };
-      }
-      
-      return { success: false };
-    } catch (error) {
-      console.error('Erreur refresh user:', error);
-      return { success: false };
-    }
-  };
-
-  const value = {
-    user,
-    token,
-    loading,
-    isAuthenticated: !!user,
-    login,
-    register,
-    logout,
-    updateUser,
-    refreshUser
-  };
-
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
-};
+}
